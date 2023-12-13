@@ -14,5 +14,5 @@ void main(){
 
     gl_FrontColor = color;
     gl_Position = vec4(position, 1.0, 1.0);
-    gl_PointSize = pointsize;
+    gl_PointSize = pointsize * clamp(zoom, 0.1f, 0.9f) + 0.1f;
 }

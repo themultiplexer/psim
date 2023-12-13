@@ -210,14 +210,14 @@ using namespace std;
 #define GUI
 #define NUM_FRAMES 2000
 
-#define THREADS_PER_BLOCK 100
+#define THREADS_PER_BLOCK 500
 #define EPS_2 0.00001f
 #define GRAVITY 0.00000001f
 
 GLuint shaderprogram;
 
-bool overlay = true;
-bool masses = false;
+bool overlay = false;
+bool masses = true;
 bool smear = false;
 float currentZoom = 0.8f;
 
@@ -271,6 +271,7 @@ void mouse(int button, int state, int x, int y) {
 		} else {
 			currentZoom /= 1.2;
 		}
+      //printf("%f\n", currentZoom);
 		glUseProgram(shaderprogram);
 		glUniform1f(glGetUniformLocation(shaderprogram, "zoom"), currentZoom);
 		glUseProgram(0);
@@ -472,7 +473,7 @@ int main(int argc, char **argv) {
 			particleWithColor[i].y = hPositions[i].y;
 			if (masses) {
 				particleWithColor[i].size = pow(hMasses[i], 3) * 10.0;
-				//particleWithColor[i].a = hMasses[i];
+				particleWithColor[i].a = 1.0;
 			}else {
 				particleWithColor[i].size = 10.0;
 				particleWithColor[i].a = 1.0;
