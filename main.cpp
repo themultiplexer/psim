@@ -12,6 +12,8 @@
 
 #define PROGRAM_FILE "../kernels.cl"
 #define KERNEL_FUNC "applyForces"
+#define WINDOW_WIDTH 1920
+#define WINDOW_HEIGHT 1080
 
 /* Find a GPU or CPU associated with the first available platform 
 
@@ -212,6 +214,13 @@ using namespace std;
 #define EPS_2 0.00001f
 #define GRAVITY 0.00000001f
 
+GLuint shaderprogram;
+
+bool overlay = true;
+bool masses = false;
+bool smear = false;
+float currentZoom = 0.8f;
+
 float randF(const float min = 0.0f, const float max = 1.0f) {
 	int randI = rand();
 	float randF = (float) randI / (float) RAND_MAX;
@@ -239,9 +248,7 @@ std::string readFile(const char *filePath) {
     return content;
 }
 
-bool overlay = true;
-bool masses = false;
-bool smear = false;
+
 
 void keyboard( unsigned char key, int x, int y )
 {
@@ -254,13 +261,25 @@ void keyboard( unsigned char key, int x, int y )
 	}
 }
 
-float2 *gpuPositions;
-float2 *gpuVelocities;
-float2 *gpuAcceleration;
-float *gpuMasses;
-
 void mouse(int button, int state, int x, int y) {
-	printf("%d: %d  %dx%d\n", button, state,x, y);
+	if ((button == 3) || (button == 4)) // It's a wheel event
+	{
+		if (state == GLUT_UP) return;
+
+		if (button == 3) {
+			currentZoom *= 1.2;
+		} else {
+			currentZoom /= 1.2;
+		}
+		glUseProgram(shaderprogram);
+		glUniform1f(glGetUniformLocation(shaderprogram, "zoom"), currentZoom);
+		glUseProgram(0);
+	}else{  // normal button event
+		printf("Button %s At %d %d\n", (state == GLUT_DOWN) ? "Down" : "Up", x, y);
+	}
+	
+	
+	// TODO Add option again to "spawn" particle with mass
 	//hack<<<1, 1>>>(gpuVelocities, gpuAcceleration, gpuPositions, gpuMasses);
 }
 
@@ -269,7 +288,7 @@ void callback () {
 }
 
 int main(int argc, char **argv) {
-	cout << "Press s for smear, m for mass-mode" << endl;
+	cout << "Press s for smear, m for mass-mode, scroll = zoom" << endl;
 	
 	if (argc != 2) {
 		cout << "Usage: " << argv[0] << " <numBodies>" << endl;
@@ -297,7 +316,7 @@ int main(int argc, char **argv) {
 		hPositions[i].y = randF(-1.0, 1.0);
 		hVelocities[i].x = hPositions[i].y * 0.007f + randF(0.001f, -0.001f);
 		hVelocities[i].y = -hPositions[i].x * 0.007f + randF(0.001f, -0.001f);
-		hMasses[i] = randF(0.0f, 1.0f) * 10000.0f / (float) numBodies;
+		hMasses[i] = randF(0.0f, 1.0f); // Change limits for interesting stuff to happen :)
 		particleWithColor[i].r = ((float)hPositions[i].x + 1.0f) / 2.f;
 		particleWithColor[i].g = 1.0f - particleWithColor[i].r;
 		particleWithColor[i].b = ((float)hPositions[i].y + 1.0f) / 2.f;
@@ -348,7 +367,7 @@ int main(int argc, char **argv) {
       exit(1);
    }
 
-  cl_kernel updatekernel = clCreateKernel(program, "update", &err);
+   cl_kernel updatekernel = clCreateKernel(program, "update", &err);
    if(err < 0) {
       perror("Couldn't create a kernel");
       exit(1);
@@ -367,16 +386,14 @@ int main(int argc, char **argv) {
 	delete[] hVelocities;
 	
 	// Initialize OpenGL rendering
-#ifdef GUI
 	glutInit( &argc, argv );
     glutInitDisplayMode( GLUT_RGBA | GLUT_DOUBLE );
-    glutInitWindowSize( 2000, 2000 );
+    glutInitWindowSize( WINDOW_WIDTH, WINDOW_HEIGHT );
     glutCreateWindow("Massively Parallel Computing - NBody Simulation");
 	glutDisplayFunc(callback);
     glewInit();
 	glEnable(GL_PROGRAM_POINT_SIZE);
-
-	GLuint shaderprogram;
+	
 	std::string vertexSource = readFile("../shader.glsl");
 	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
 	const GLchar *source = (const GLchar *)vertexSource.c_str();
@@ -386,6 +403,10 @@ int main(int argc, char **argv) {
     glAttachShader(shaderprogram, vertexShader);
     glLinkProgram(shaderprogram);
 	glUseProgram(shaderprogram);
+
+	GLfloat uResolution[2] = { (float)WINDOW_WIDTH, (float)WINDOW_HEIGHT };
+    glUniform2fv(glGetUniformLocation(shaderprogram, "iResolution"), 1, uResolution);
+    glUniform1f(glGetUniformLocation(shaderprogram, "zoom"), currentZoom);
 
 	GLuint vb;
 	glGenBuffers(1, &vb);
@@ -416,7 +437,6 @@ int main(int argc, char **argv) {
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glutKeyboardFunc(keyboard);
 	glutMouseFunc(mouse);
-#endif
 
     size_t tpb = THREADS_PER_BLOCK;
 
@@ -435,10 +455,11 @@ int main(int argc, char **argv) {
 			exit(1);
 		}
 
+		clFinish(queue);
 		int ns = (continuousTimeNs() - computeStart);
 		frametimes[t].y = min((ns / 1000000.0) / 100.0, 0.2) - 1.0;
 		frametimes[t].x = ((float)t/NUM_FRAMES) * 2.0 - 1.0 ;
-		cout << "Frame compute time: " << ns << "ns" << endl;
+		//cout << "Frame compute time: " << ns << "ns" << endl;
 
 		err = clEnqueueReadBuffer(queue, position_buffer, CL_TRUE, 0, numBodies * sizeof(float2), hPositions, 0, NULL, NULL);
 		if(err < 0) {
@@ -446,80 +467,73 @@ int main(int argc, char **argv) {
 			exit(1);
 		}
 
-#ifdef GUI
-
-	for (unsigned int i = 0; i < numBodies; i++) {
-		particleWithColor[i].x = hPositions[i].x;
-		particleWithColor[i].y = hPositions[i].y;
-		if (masses) {
-			particleWithColor[i].size = pow(hMasses[i], 3) * 10.0;
-			//particleWithColor[i].a = hMasses[i];
-		}else {
-			particleWithColor[i].size = 10.0;
-			particleWithColor[i].a = 1.0;
+		for (unsigned int i = 0; i < numBodies; i++) {
+			particleWithColor[i].x = hPositions[i].x;
+			particleWithColor[i].y = hPositions[i].y;
+			if (masses) {
+				particleWithColor[i].size = pow(hMasses[i], 3) * 10.0;
+				//particleWithColor[i].a = hMasses[i];
+			}else {
+				particleWithColor[i].size = 10.0;
+				particleWithColor[i].a = 1.0;
+			}
 		}
-	}
 
-	glBindBuffer(GL_ARRAY_BUFFER, vb);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(GLParticle) * numBodies, particleWithColor, GL_STATIC_DRAW);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
-
-	if(!smear){
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	} else {
-		glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-	}
-	
-	glUseProgram(shaderprogram);
-	glBindVertexArray(va);
-	glDrawArrays(GL_POINTS, 0, numBodies);
-	glBindVertexArray(0);
-	glUseProgram(0);
-
-	if(overlay){
-		// Draw Info rectangle
-		float2 rect = float2{-1.0, -1.0};
-		glPushMatrix();
-		glTranslatef(rect.x, rect.y, 0.0f);
-		glBegin(GL_QUADS);
-		glColor4f(1.0, 1.0, 1.0, 0.75);
-		glVertex2f(0, 0);
-		glVertex2f(0, 0.1);
-		glVertex2f(2.0, 0.1);
-		glVertex2f(2-0, 0);       
-		glEnd();
-		glPopMatrix();
-
-		// Draw frametime string
-		glColor4f(0.0, 0.0, 0.0, 1.0);
-		glWindowPos2i(10, 50);
-		glutBitmapString(GLUT_BITMAP_HELVETICA_18, (unsigned const char*)( std::to_string((ns / 1000000.0)).c_str() ) );
-
-		// Draw graph
-		glBindBuffer(GL_ARRAY_BUFFER, vbp);
-		glBufferData(GL_ARRAY_BUFFER, sizeof(float2) * t, frametimes, GL_STATIC_DRAW);
-		glColor4f(0.0, 0.0, 0.0, 1.0);
-		glVertexPointer(2, GL_FLOAT, sizeof(float2), 0);
-		glEnableClientState(GL_VERTEX_ARRAY);
-		glDrawArrays(GL_LINE_STRIP, 0, t);
-		glDisableClientState(GL_VERTEX_ARRAY);
-		glLineWidth(2.0);
+		glBindBuffer(GL_ARRAY_BUFFER, vb);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(GLParticle) * numBodies, particleWithColor, GL_STATIC_DRAW);
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
-	}
-	glutMainLoopEvent();
-    glutSwapBuffers();
-#endif
+
+		if(!smear){
+			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		} else {
+			glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		}
+		
+		glUseProgram(shaderprogram);
+		glBindVertexArray(va);
+		glDrawArrays(GL_POINTS, 0, numBodies);
+		glBindVertexArray(0);
+		glUseProgram(0);
+
+		if(overlay){
+			// Draw Info rectangle
+			float2 rect = float2{-1.0, -1.0};
+			glPushMatrix();
+			glTranslatef(rect.x, rect.y, 0.0f);
+			glBegin(GL_QUADS);
+			glColor4f(1.0, 1.0, 1.0, 0.75);
+			glVertex2f(0, 0);
+			glVertex2f(0, 0.1);
+			glVertex2f(2.0, 0.1);
+			glVertex2f(2-0, 0);       
+			glEnd();
+			glPopMatrix();
+
+			// Draw frametime string
+			glColor4f(0.0, 0.0, 0.0, 1.0);
+			glWindowPos2i(10, 20);
+			glutBitmapString(GLUT_BITMAP_HELVETICA_18, (unsigned const char*)( std::to_string((ns / 1000000.0)).c_str() ) );
+
+			// Draw graph
+			glBindBuffer(GL_ARRAY_BUFFER, vbp);
+			glBufferData(GL_ARRAY_BUFFER, sizeof(float2) * t, frametimes, GL_STATIC_DRAW);
+			glColor4f(0.0, 0.0, 0.0, 1.0);
+			glVertexPointer(2, GL_FLOAT, sizeof(float2), 0);
+			glEnableClientState(GL_VERTEX_ARRAY);
+			glDrawArrays(GL_LINE_STRIP, 0, t);
+			glDisableClientState(GL_VERTEX_ARRAY);
+			glLineWidth(2.0);
+			glBindBuffer(GL_ARRAY_BUFFER, 0);
+		}
+		glutMainLoopEvent();
+		glutSwapBuffers();
 	}
 
-#ifdef GUI
 	cout << "Done." << endl;
-#endif
 
-#ifdef GUI
 	glDeleteBuffers(1, &vb);
 	glDeleteBuffers(1, &va);
 	glDeleteBuffers(1, &vbp);
-#endif
 
    /* Deallocate resources */
    clReleaseKernel(updatekernel);
