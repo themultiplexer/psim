@@ -254,7 +254,6 @@ void keyboard( unsigned char key, int x, int y )
 	}
 }
 
-
 float2 *gpuPositions;
 float2 *gpuVelocities;
 float2 *gpuAcceleration;
@@ -270,14 +269,15 @@ void callback () {
 }
 
 int main(int argc, char **argv) {
-	/*
+	cout << "Press s for smear, m for mass-mode" << endl;
+	
 	if (argc != 2) {
 		cout << "Usage: " << argv[0] << " <numBodies>" << endl;
+		cout << "---Note: <numBodies> must be dividable by 100" << endl;
 		return 1;
 	}
-	unsigned int numBodies = atoi(argv[1]);*/
+	size_t numBodies = atoi(argv[1]);
 
-	size_t numBodies = 10000;
 	size_t numBlocks = numBodies / THREADS_PER_BLOCK;
 	printf("CL_DEVICE_MAX_WORK_ITEM_SIZES:%d \n", CL_DEVICE_MAX_WORK_ITEM_SIZES );
 	printf("MAX_WORK_GROUP_SIZE:%d total:%d blocks:%d\n", CL_DEVICE_MAX_WORK_GROUP_SIZE, numBodies, numBlocks);
@@ -418,15 +418,11 @@ int main(int argc, char **argv) {
 	glutMouseFunc(mouse);
 #endif
 
-    int shared_size = THREADS_PER_BLOCK * sizeof(float4);
     size_t tpb = THREADS_PER_BLOCK;
 
 	// Calculate
 	for (unsigned int t = 0; t < NUM_FRAMES; t++) {
 		__int64_t computeStart = continuousTimeNs();
-
-		//applyForces<<<blockGrid, threadBlock, shared_size>>>(gpuAcceleration, gpuPositions, gpuMasses, numBodies);
-		//update<<<blockGrid, threadBlock>>>(gpuVelocities, gpuPositions, gpuAcceleration, numBodies);
 
 		err = clEnqueueNDRangeKernel(queue, applykernel, 1, NULL, &numBodies, &tpb, 0, NULL, NULL); 
 		if(err < 0) {
@@ -449,9 +445,6 @@ int main(int argc, char **argv) {
 			printf("Couldn't read the buffer: %s\n", getErrorString(err));
 			exit(1);
 		}
-
-		// TODO 5: Download the updated positions into the hPositions array for rendering.
-		//cudaMemcpy(hPositions, gpuPositions, numBodies * sizeof(float2), cudaMemcpyDeviceToHost);
 
 #ifdef GUI
 
