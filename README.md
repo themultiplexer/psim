@@ -1,4 +1,8 @@
 # Particle Simulation
+### TODO
+- [ ] 3D Particles
+- [ ] Bloom 
+
 
 ## Requirements
 
