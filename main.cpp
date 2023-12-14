@@ -11,11 +11,12 @@
 #include <chrono>
 #include <CL/cl.hpp>
 
-#define PROGRAM_FILE "../../kernels.cl"
-#define SHADER_FILE "../../shader.glsl"
+#define PROGRAM_FILE "../kernels.cl"
+#define SHADER_FILE "../shader.glsl"
 #define KERNEL_FUNC "applyForces"
 #define WINDOW_WIDTH 1920
 #define WINDOW_HEIGHT 1080
+#define CLI_INPUT false
 
 const char *getErrorString(cl_int error)
 {
@@ -313,15 +314,23 @@ void callback () {
 
 int main(int argc, char **argv) {
    list_devices();
-	cout << "Press s for smear, m for mass-mode, scroll = zoom" << endl;
-	/*
-	if (argc != 2) {
-		cout << "Usage: " << argv[0] << " <numBodies>" << endl;
-		cout << "---Note: <numBodies> must be dividable by 100" << endl;
-		return 1;
-	}
-	size_t numBodies = atoi(argv[1]);*/
+	cout << "Press s for smear, m for mass-mode, scroll = zoom, d for debug overlay" << endl;
    size_t numBodies = 10000;
+
+	if (CLI_INPUT) {
+      if (argc != 2) {
+         cout << "Usage: " << argv[0] << " <numBodies>" << endl;
+         cout << "---Note: <numBodies> must be dividable by 100" << endl;
+         return 1;
+	   }
+   }
+   
+   if (argc == 2) {
+      size_t numBodies = atoi(argv[1]);
+   }
+
+	
+   
 	size_t numBlocks = numBodies / THREADS_PER_BLOCK;
 	printf("CL_DEVICE_MAX_WORK_ITEM_SIZES:%d \n", CL_DEVICE_MAX_WORK_ITEM_SIZES );
 	printf("MAX_WORK_GROUP_SIZE:%d total:%d blocks:%d\n", CL_DEVICE_MAX_WORK_GROUP_SIZE, numBodies, numBlocks);
