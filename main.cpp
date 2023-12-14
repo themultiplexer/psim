@@ -1,108 +1,21 @@
 #include <fstream>
 #include <iostream>
+#include <string>
+#include <vector>
 #include <cstdio>
 #include <cstdlib>
-#include <unistd.h>
 #include <math.h>
 #include <GL/glew.h>
 #include <GL/freeglut.h>
 #include <GL/freeglut_std.h>
-#include <sys/time.h>
-#include <CL/cl.h>
+#include <chrono>
+#include <CL/cl.hpp>
 
-#define PROGRAM_FILE "../kernels.cl"
+#define PROGRAM_FILE "../../kernels.cl"
+#define SHADER_FILE "../../shader.glsl"
 #define KERNEL_FUNC "applyForces"
 #define WINDOW_WIDTH 1920
 #define WINDOW_HEIGHT 1080
-
-/* Find a GPU or CPU associated with the first available platform 
-
-The `platform` structure identifies the first platform identified by the 
-OpenCL runtime. A platform identifies a vendor's installation, so a system 
-may have an NVIDIA platform and an AMD platform. 
-
-The `device` structure corresponds to the first accessible device 
-associated with the platform. Because the second parameter is 
-`CL_DEVICE_TYPE_GPU`, this device must be a GPU.
-*/
-cl_device_id create_device() {
-
-   cl_platform_id platform;
-   cl_device_id dev;
-   int err;
-
-   /* Identify a platform */
-   err = clGetPlatformIDs(1, &platform, NULL);
-   if(err < 0) {
-      perror("Couldn't identify a platform");
-      exit(1);
-   } 
-
-   // GPU
-   err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &dev, NULL);
-   if(err == CL_DEVICE_NOT_FOUND) {
-      // CPU
-      err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, 1, &dev, NULL);
-   }
-   if(err < 0) {
-      perror("Couldn't access any devices");
-      exit(1);   
-   }
-
-   return dev;
-}
-
-cl_program build_program(cl_context ctx, cl_device_id dev, const char* filename) {
-
-   cl_program program;
-   FILE *program_handle;
-   char *program_buffer, *program_log;
-   size_t program_size, log_size;
-   int err;
-
-   /* Read program file and place content into buffer */
-   program_handle = fopen(filename, "r");
-   if(program_handle == NULL) {
-      perror("Couldn't find the program file");
-      exit(1);
-   }
-   fseek(program_handle, 0, SEEK_END);
-   program_size = ftell(program_handle);
-   rewind(program_handle);
-   program_buffer = (char*)malloc(program_size + 1);
-   program_buffer[program_size] = '\0';
-   fread(program_buffer, sizeof(char), program_size, program_handle);
-   fclose(program_handle);
-
-   program = clCreateProgramWithSource(ctx, 1, (const char**)&program_buffer, &program_size, &err);
-   if(err < 0) {
-      perror("Couldn't create the program");
-      exit(1);
-   }
-   free(program_buffer);
-
-   /* Build program 
-
-   The fourth parameter accepts options that configure the compilation. 
-   These are similar to the flags used by gcc. For example, you can 
-   define a macro with the option -DMACRO=VALUE and turn off optimization 
-   with -cl-opt-disable.
-   */
-   err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
-   if(err < 0) {
-
-      /* Find size of log and print to std output */
-      clGetProgramBuildInfo(program, dev, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
-      program_log = (char*) malloc(log_size + 1);
-      program_log[log_size] = '\0';
-      clGetProgramBuildInfo(program, dev, CL_PROGRAM_BUILD_LOG, log_size + 1, program_log, NULL);
-      printf("%s\n", program_log);
-      free(program_log);
-      exit(1);
-   }
-
-   return program;
-}
 
 const char *getErrorString(cl_int error)
 {
@@ -181,6 +94,125 @@ switch(error){
     }
 }
 
+cl_device_id create_device() {
+
+   cl_platform_id platform;
+   cl_device_id dev;
+   int err;
+
+   /* Identify a platform */
+   err = clGetPlatformIDs(1, &platform, NULL);
+   if(err < 0) {
+       printf("Couldn't identify a platform: %s\n", getErrorString(err));
+      exit(1);
+   } 
+
+   // GPU
+   err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_GPU, 1, &dev, NULL);
+   if(err == CL_DEVICE_NOT_FOUND) {
+      // CPU
+      err = clGetDeviceIDs(platform, CL_DEVICE_TYPE_CPU, 1, &dev, NULL);
+   }
+   if(err < 0) {
+      printf("Couldn't access any devices: %s\n", getErrorString(err));
+      exit(1);   
+   }
+
+   return dev;
+}
+
+cl_program build_program(cl_context ctx, cl_device_id dev, const char* filename) {
+
+   cl_program program;
+   FILE *program_handle;
+   char *program_buffer, *program_log;
+   size_t program_size, log_size;
+   int err;
+
+   /* Read program file and place content into buffer */
+   program_handle = fopen(filename, "r");
+   if(program_handle == NULL) {
+      perror("Couldn't find the program file");
+      exit(1);
+   }
+   fseek(program_handle, 0, SEEK_END);
+   program_size = ftell(program_handle);
+   rewind(program_handle);
+   program_buffer = (char*)malloc(program_size + 1);
+   program_buffer[program_size] = '\0';
+   fread(program_buffer, sizeof(char), program_size, program_handle);
+   fclose(program_handle);
+
+   program = clCreateProgramWithSource(ctx, 1, (const char**)&program_buffer, &program_size, &err);
+   if(err < 0) {
+      printf("Couldn't create the CL program: %s\n", getErrorString(err));
+      exit(1);
+   }
+   free(program_buffer);
+
+   err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
+   if(err < 0) {
+
+      /* Find size of log and print to std output */
+      clGetProgramBuildInfo(program, dev, CL_PROGRAM_BUILD_LOG, 0, NULL, &log_size);
+      program_log = (char*) malloc(log_size + 1);
+      program_log[log_size] = '\0';
+      clGetProgramBuildInfo(program, dev, CL_PROGRAM_BUILD_LOG, log_size + 1, program_log, NULL);
+      printf("%s\n", program_log);
+      free(program_log);
+      exit(1);
+   }
+
+   return program;
+}
+
+void list_devices() {
+   std::vector<cl::Platform> platforms;
+   cl::Platform::get(&platforms);
+
+   int platform_id = 0;
+   int device_id = 0;
+
+   std::cout << "Number of Platforms: " << platforms.size() << std::endl;
+
+   for(std::vector<cl::Platform>::iterator it = platforms.begin(); it != platforms.end(); ++it) {
+      cl::Platform platform(*it);
+
+      std::cout << "Platform ID: " << platform_id++ << std::endl;
+      std::cout << "Platform Name: " << platform.getInfo<CL_PLATFORM_NAME>() << std::endl;
+      std::cout << "Platform Vendor: " << platform.getInfo<CL_PLATFORM_VENDOR>() << std::endl;
+
+      std::vector<cl::Device> devices;
+      platform.getDevices(CL_DEVICE_TYPE_GPU | CL_DEVICE_TYPE_CPU, &devices);
+
+      for(std::vector<cl::Device>::iterator it2 = devices.begin(); it2 != devices.end(); ++it2) {
+      cl::Device device(*it2);
+
+      std::cout << std::endl << "\tDevice " << device_id++ << ": " << std::endl;
+      std::cout << "\t\tDevice Name: " << device.getInfo<CL_DEVICE_NAME>() << std::endl;
+      std::cout << "\t\tDevice Vendor: " << device.getInfo<CL_DEVICE_VENDOR>() << std::endl;
+      std::cout << "\t\tDevice Version: " << device.getInfo<CL_DEVICE_VERSION>() << std::endl;
+      switch (device.getInfo<CL_DEVICE_TYPE>()) {
+         case 4:
+            std::cout << "\t\tDevice Type: GPU" << std::endl;
+            break;
+         case 2:
+            std::cout << "\t\tDevice Type: CPU" << std::endl;
+            break;
+         default:
+            std::cout << "\t\tDevice Type: unknown" << std::endl;
+      }
+      std::cout << "\t\tDevice Max Compute Units: " << device.getInfo<CL_DEVICE_MAX_COMPUTE_UNITS>() << std::endl;
+      std::cout << "\t\tDevice Global Memory: " << device.getInfo<CL_DEVICE_GLOBAL_MEM_SIZE>() << std::endl;
+      std::cout << "\t\tDevice Max Clock Frequency: " << device.getInfo<CL_DEVICE_MAX_CLOCK_FREQUENCY>() << std::endl;
+      std::cout << "\t\tDevice Max Memory Allocation: " << device.getInfo<CL_DEVICE_MAX_MEM_ALLOC_SIZE>() << std::endl;
+      std::cout << "\t\tDevice Local Memory: " << device.getInfo<CL_DEVICE_LOCAL_MEM_SIZE>() << std::endl;
+      std::cout << "\t\tDevice Available: " << device.getInfo<CL_DEVICE_AVAILABLE>() << std::endl;
+      }
+      std::cout << std::endl;
+   }
+}
+
 struct float2 {
   float x, y;
 };
@@ -197,13 +229,6 @@ struct GLParticle {
 	GLfloat a;
 	GLfloat size;
 };
-
-inline __int64_t continuousTimeNs()
-{
-	timespec now;
-	clock_gettime(CLOCK_REALTIME, &now);
-	return (__int64_t ) now.tv_sec * 1000000000 + (__int64_t ) now.tv_nsec;
-}
 
 using namespace std;
 
@@ -248,8 +273,6 @@ std::string readFile(const char *filePath) {
     return content;
 }
 
-
-
 void keyboard( unsigned char key, int x, int y )
 {
     if(key == 'd'){
@@ -289,15 +312,16 @@ void callback () {
 }
 
 int main(int argc, char **argv) {
+   list_devices();
 	cout << "Press s for smear, m for mass-mode, scroll = zoom" << endl;
-	
+	/*
 	if (argc != 2) {
 		cout << "Usage: " << argv[0] << " <numBodies>" << endl;
 		cout << "---Note: <numBodies> must be dividable by 100" << endl;
 		return 1;
 	}
-	size_t numBodies = atoi(argv[1]);
-
+	size_t numBodies = atoi(argv[1]);*/
+   size_t numBodies = 10000;
 	size_t numBlocks = numBodies / THREADS_PER_BLOCK;
 	printf("CL_DEVICE_MAX_WORK_ITEM_SIZES:%d \n", CL_DEVICE_MAX_WORK_ITEM_SIZES );
 	printf("MAX_WORK_GROUP_SIZE:%d total:%d blocks:%d\n", CL_DEVICE_MAX_WORK_GROUP_SIZE, numBodies, numBlocks);
@@ -325,9 +349,9 @@ int main(int argc, char **argv) {
 
 	cl_int err;
 	cl_device_id device = create_device();
-    cl_context context = clCreateContext(NULL, 1, &device, NULL, NULL, &err);
+   cl_context context = clCreateContext(NULL, 1, &device, NULL, NULL, &err);
 	if(err < 0) {
-		perror("Couldn't create a context");
+      printf("Couldn't create a context: %s\n", getErrorString(err));
 		exit(1);   
 	}
 
@@ -339,7 +363,7 @@ int main(int argc, char **argv) {
    cl_mem acceleration_buffer = clCreateBuffer(context, CL_MEM_READ_ONLY | CL_MEM_COPY_HOST_PTR, numBodies * sizeof(float2), hAccelerations, &err);
    cl_mem mass_buffer = clCreateBuffer(context, CL_MEM_READ_WRITE | CL_MEM_COPY_HOST_PTR, numBodies * sizeof(float), hMasses, &err);
    if(err < 0) {
-      perror("Couldn't create a buffer");
+      printf("Couldn't create a buffer: %s\n", getErrorString(err));
       exit(1);   
    };
 
@@ -348,13 +372,13 @@ int main(int argc, char **argv) {
    */
    cl_command_queue queue = clCreateCommandQueue(context, device, 0, &err);
    if(err < 0) {
-      perror("Couldn't create a command queue");
+      printf("Couldn't create a command queue: %s\n", getErrorString(err));
       exit(1);   
    };
 
    cl_kernel applykernel = clCreateKernel(program, "applyForces", &err);
    if(err < 0) {
-      perror("Couldn't create a kernel");
+      printf("Couldn't create a kernel: %s\n", getErrorString(err));
       exit(1);
    };
 
@@ -364,13 +388,13 @@ int main(int argc, char **argv) {
    err |= clSetKernelArg(applykernel, 2, THREADS_PER_BLOCK * sizeof(float4), NULL); // Allocate Shared Memory
    err |= clSetKernelArg(applykernel, 3, sizeof(cl_mem), &mass_buffer);
    if(err < 0) {
-      perror("Couldn't create a kernel argument");
+      printf("Couldn't create a kernel argument: %s\n", getErrorString(err));
       exit(1);
    }
 
    cl_kernel updatekernel = clCreateKernel(program, "update", &err);
    if(err < 0) {
-      perror("Couldn't create a kernel");
+      printf("Couldn't create a kernel: %s\n", getErrorString(err));
       exit(1);
    };
 
@@ -379,7 +403,7 @@ int main(int argc, char **argv) {
    err |= clSetKernelArg(updatekernel, 1, sizeof(cl_mem), &position_buffer);
    err |= clSetKernelArg(updatekernel, 2, sizeof(cl_mem), &acceleration_buffer);
    if(err < 0) {
-      perror("Couldn't create a kernel argument");
+      printf("Couldn't create a kernel argument: %s\n", getErrorString(err));
       exit(1);
    }
 
@@ -395,7 +419,7 @@ int main(int argc, char **argv) {
     glewInit();
 	glEnable(GL_PROGRAM_POINT_SIZE);
 	
-	std::string vertexSource = readFile("../shader.glsl");
+	std::string vertexSource = readFile(SHADER_FILE);
 	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
 	const GLchar *source = (const GLchar *)vertexSource.c_str();
 	glShaderSource(vertexShader, 1, &source, 0);
@@ -443,7 +467,7 @@ int main(int argc, char **argv) {
 
 	// Calculate
 	for (unsigned int t = 0; t < NUM_FRAMES; t++) {
-		__int64_t computeStart = continuousTimeNs();
+		auto computeStart = std::chrono::high_resolution_clock::now();
 
 		err = clEnqueueNDRangeKernel(queue, applykernel, 1, NULL, &numBodies, &tpb, 0, NULL, NULL); 
 		if(err < 0) {
@@ -457,7 +481,7 @@ int main(int argc, char **argv) {
 		}
 
 		clFinish(queue);
-		int ns = (continuousTimeNs() - computeStart);
+		int ns = (std::chrono::high_resolution_clock::now() - computeStart).count();
 		frametimes[t].y = min((ns / 1000000.0) / 100.0, 0.2) - 1.0;
 		frametimes[t].x = ((float)t/NUM_FRAMES) * 2.0 - 1.0 ;
 		//cout << "Frame compute time: " << ns << "ns" << endl;
