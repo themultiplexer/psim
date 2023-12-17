@@ -1,5 +1,6 @@
 #include <fstream>
 #include <iostream>
+#include <opencv2/core.hpp>
 #include <string>
 #include <vector>
 #include <cstdio>
@@ -10,6 +11,9 @@
 #include <GL/freeglut_std.h>
 #include <chrono>
 #include <CL/cl.hpp>
+#include <opencv2/core/opengl.hpp>
+#include <opencv2/core/ocl.hpp>
+#include <opencv2/imgproc.hpp>
 
 #define PROGRAM_FILE "../kernels.cl"
 #define SHADER_FILE "../shader.glsl"
@@ -240,7 +244,7 @@ using namespace std;
 #define EPS_2 0.00001f
 #define GRAVITY 0.00000001f
 
-GLuint shaderprogram;
+GLuint shaderprogram, pixelprogram;
 
 bool overlay = false;
 bool masses = true;
@@ -312,8 +316,14 @@ void callback () {
 
 }
 
+void on_resize(int w, int h)
+{
+    glViewport(0, 0, w, h);
+}
+
 int main(int argc, char **argv) {
    list_devices();
+
 	cout << "Press s for smear, m for mass-mode, scroll = zoom, d for debug overlay" << endl;
    size_t numBodies = 10000;
 
@@ -328,8 +338,6 @@ int main(int argc, char **argv) {
    if (argc == 2) {
       size_t numBodies = atoi(argv[1]);
    }
-
-	
    
 	size_t numBlocks = numBodies / THREADS_PER_BLOCK;
 	printf("CL_DEVICE_MAX_WORK_ITEM_SIZES:%d \n", CL_DEVICE_MAX_WORK_ITEM_SIZES );
@@ -421,12 +429,19 @@ int main(int argc, char **argv) {
 	
 	// Initialize OpenGL rendering
 	glutInit( &argc, argv );
-    glutInitDisplayMode( GLUT_RGBA | GLUT_DOUBLE );
-    glutInitWindowSize( WINDOW_WIDTH, WINDOW_HEIGHT );
-    glutCreateWindow("Massively Parallel Computing - NBody Simulation");
+   glutInitDisplayMode( GLUT_RGBA | GLUT_DOUBLE );
+   glutInitWindowSize( WINDOW_WIDTH, WINDOW_HEIGHT );
+   glutCreateWindow("Massively Parallel Computing - NBody Simulation");
 	glutDisplayFunc(callback);
-    glewInit();
-	glEnable(GL_PROGRAM_POINT_SIZE);
+   glutReshapeFunc(on_resize);
+   glewInit();
+
+   if (cv::ocl::haveOpenCL()){
+		cv::ogl::ocl::initializeContextFromGL();
+	}else {
+      printf("Bruh No OpenCV<->OpenGL interop :/");
+      exit(123);
+   }
 	
 	std::string vertexSource = readFile(SHADER_FILE);
 	GLuint vertexShader = glCreateShader(GL_VERTEX_SHADER);
@@ -434,13 +449,13 @@ int main(int argc, char **argv) {
 	glShaderSource(vertexShader, 1, &source, 0);
 	glCompileShader(vertexShader);
 	shaderprogram = glCreateProgram();
-    glAttachShader(shaderprogram, vertexShader);
-    glLinkProgram(shaderprogram);
+   glAttachShader(shaderprogram, vertexShader);
+   glLinkProgram(shaderprogram);
 	glUseProgram(shaderprogram);
 
 	GLfloat uResolution[2] = { (float)WINDOW_WIDTH, (float)WINDOW_HEIGHT };
-    glUniform2fv(glGetUniformLocation(shaderprogram, "iResolution"), 1, uResolution);
-    glUniform1f(glGetUniformLocation(shaderprogram, "zoom"), currentZoom);
+   glUniform2fv(glGetUniformLocation(shaderprogram, "iResolution"), 1, uResolution);
+   glUniform1f(glGetUniformLocation(shaderprogram, "zoom"), currentZoom);
 
 	GLuint vb;
 	glGenBuffers(1, &vb);
@@ -466,13 +481,41 @@ int main(int argc, char **argv) {
 	GLuint vbp;
 	glGenBuffers(1, &vbp);
 
+   cv::ogl::Texture2D texture;
+   GLuint fbo, fbo_texture;
+
+   glActiveTexture(GL_TEXTURE0);
+   glGenTextures(1, &fbo_texture);
+   glBindTexture(GL_TEXTURE_2D, fbo_texture);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, WINDOW_WIDTH, WINDOW_HEIGHT, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+   texture = cv::ogl::Texture2D(cv::Size(WINDOW_WIDTH, WINDOW_HEIGHT), cv::ogl::Texture2D::Format::RGBA, fbo_texture, false);
+   glBindTexture(GL_TEXTURE_2D, 0);
+
+   /* Framebuffer to link everything together */
+   glGenFramebuffers(1, &fbo);
+   glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fbo_texture, 0);
+
+   GLenum status;
+   if ((status = glCheckFramebufferStatus(GL_FRAMEBUFFER)) != GL_FRAMEBUFFER_COMPLETE) {
+      fprintf(stderr, "glCheckFramebufferStatus: error %p",
+         glewGetErrorString(status));
+      return 0;
+   }
+   glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
 	glEnable(GL_POINT_SMOOTH);
+   glEnable(GL_PROGRAM_POINT_SIZE);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	glutKeyboardFunc(keyboard);
 	glutMouseFunc(mouse);
 
-    size_t tpb = THREADS_PER_BLOCK;
+   size_t tpb = THREADS_PER_BLOCK;
 
 	// Calculate
 	for (unsigned int t = 0; t < NUM_FRAMES; t++) {
@@ -517,10 +560,13 @@ int main(int argc, char **argv) {
 		glBufferData(GL_ARRAY_BUFFER, sizeof(GLParticle) * numBodies, particleWithColor, GL_STATIC_DRAW);
 		glBindBuffer(GL_ARRAY_BUFFER, 0);
 
+
+      glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+      glClearColor((GLclampf) 0.0f,(GLclampf) 0.0f,(GLclampf) 0.0f,(GLclampf) 1.0f);
 		if(!smear){
-			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+			glClear(GL_COLOR_BUFFER_BIT);
 		} else {
-			glBlendFunc (GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+			glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 		}
 		
 		glUseProgram(shaderprogram);
@@ -528,6 +574,29 @@ int main(int argc, char **argv) {
 		glDrawArrays(GL_POINTS, 0, numBodies);
 		glBindVertexArray(0);
 		glUseProgram(0);
+      glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+      cv::UMat u1, u2;
+		cv::ogl::convertFromGLTexture2D(texture, u1);
+		cv::GaussianBlur(u1, u2, cv::Size(99, 99), 30.0);
+      cv::multiply(u2, 3.0, u2);
+      cv::add(u1, u2, u2);
+		cv::ogl::convertToGLTexture2D(u2, texture);
+
+		texture.bind();
+		glEnable(GL_TEXTURE_2D);
+		glBegin(GL_QUADS);
+		glTexCoord2f(0.0f, 0.0f);
+		glVertex2f(-1.0f, -1.0f);
+		glTexCoord2f(1.0f, 0.0f);
+		glVertex2f(1.0f, -1.0f);
+		glTexCoord2f(1.0f, 1.0f);
+		glVertex2f(1.0f, 1.0f);
+		glTexCoord2f(0.0f, 1.0f);
+		glVertex2f(-1.0f, 1.0f);
+		glEnd();
+		glDisable(GL_TEXTURE_2D);
+
 
 		if(overlay){
 			// Draw Info rectangle
