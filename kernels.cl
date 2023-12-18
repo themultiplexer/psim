@@ -22,7 +22,7 @@ __kernel void applyForces(__global float2 *accelerations, __global float2 *posit
 			float distSqr = r_ij.x * r_ij.x + r_ij.y * r_ij.y + EPS_2;
 			float invDistCube = 1.0f/sqrt(distSqr * distSqr * distSqr);
 			float s = sharedposmass[j].z * invDistCube;
-			a_i =  a_i + r_ij * s;
+			a_i = a_i + r_ij * s;
 		}
 
 		barrier(CLK_LOCAL_MEM_FENCE);

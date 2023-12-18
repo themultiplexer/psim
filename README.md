@@ -1,7 +1,10 @@
 # Particle Simulation
 ### TODO
+- [ ] Gravitational Field
 - [ ] 3D Particles
-- [ ] Bloom 
+- [ ] Window Size as Simulation Bounds?
+- [X] Bloom 
+
 
 
 ## Requirements
